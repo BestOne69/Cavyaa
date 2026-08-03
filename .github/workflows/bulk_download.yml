@@ -36,6 +36,7 @@ jobs:
           git push
 
       - name: Upload as artifact (backup, in case commit fails)
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: fragment-features-wide
