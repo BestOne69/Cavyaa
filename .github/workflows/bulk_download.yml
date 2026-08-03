@@ -25,7 +25,7 @@ jobs:
         run: pip install requests numpy
 
       - name: Run bulk download script
-        run: main.py
+        run: python3 main.py
 
       - name: Commit results back to the repo
         run: |
