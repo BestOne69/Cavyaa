@@ -1,0 +1,7 @@
+*.fa
+*.fa.gz
+*.bgz
+*.fai
+*.bgz
+*.tsv
+_tmp_download*
