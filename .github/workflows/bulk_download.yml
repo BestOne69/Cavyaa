@@ -40,5 +40,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: fragment-features-wide
-          path: fragment_features_wide.csv
+          path: fragment_features_genomewide.csv
           retention-days: 30

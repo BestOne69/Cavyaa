@@ -1,11 +1,14 @@
 """
-Pulls hundreds of real samples across MULTIPLE real cancer types + all
-available healthy controls -- reuses the exact same working pipeline as
-before, just widened.
+Combines our two proven improvements into one pass: pulls all 9 real
+cancer types + healthy (like v3), AND extracts genome-wide binned
+fragmentation features across all 22 chromosomes (like our deep_extract
+test) -- applying the one feature that actually improved real performance
+(+0.012 AUC) to the full, wider 632+ sample dataset for the first time.
 
-Run in Codespaces:
+Run via GitHub Actions (same workflow pattern as before) -- this is a
+bigger job than previous runs, so let it run the full ~6 hour budget if needed.
     pip install requests numpy
-    python3 bulk_download_v3.py
+    python3 bulk_download_v5_genomewide.py
 """
 import requests
 import os
@@ -17,28 +20,28 @@ DATA_BASE = "http://finaledb.research.cchmc.org/data"
 
 MIN_FRAGS = 10_000_000
 MAX_FRAGS = 60_000_000
-SAMPLE_READS = 2_000_000
+SAMPLE_READS = 1_500_000   # per-file cap, balances depth vs total runtime across 632+ files
+WINDOW = 2_000_000
+CHROMS = [str(c) for c in range(1, 23)]
 
-# Widened: healthy raised to grab everything available; added real cancer
-# types beyond lung cancer, so the dataset spans genuine diversity, not
-# just one type. Each entry: (internal_group_name, exact FinaleDB disease label, target_count)
 GROUPS = [
     ("healthy", "Healthy", 300),
     ("lung_cancer", "Lung cancer", 100),
-    ("colorectal_cancer", "Colorectal cancer", 100),
     ("liver_cancer", "Liver cancer", 100),
     ("breast_cancer", "Breast cancer", 100),
+    ("colorectal_cancer", "Colorectal cancer", 100),
     ("pancreatic_cancer", "Pancreatic cancer", 100),
-    ("kidney_cancer", "Kidney cancer", 100),
-    ("bladder_cancer", "Bladder cancer", 100),
     ("ovarian_cancer", "Ovarian cancer", 100),
     ("gastric_cancer", "Gastric cancer", 100),
+    ("kidney_cancer", "Kidney cancer", 100),
+    ("bladder_cancer", "Bladder cancer", 100),
 ]
 
-OUTPUT_CSV = "fragment_features_wide.csv"
+OUTPUT_CSV = "fragment_features_genomewide.csv"
 TMP_FILE = "_tmp_download.bgz"
 FIELDNAMES = ["sample_id", "group", "mean_len", "median_len", "std_len",
-              "pct_short", "pct_mid", "p10", "p25", "p75", "p90", "n_fragments"]
+              "pct_short", "pct_mid", "p10", "p25", "p75", "p90", "n_fragments",
+              "genome_bin_short_frac_mean", "genome_bin_short_frac_std"]
 
 
 def fetch_samples(disease, target_count, page_size=100):
@@ -68,23 +71,33 @@ def download_to_temp(key):
 def extract_features(path, sample_n=SAMPLE_READS):
     import numpy as np
     lengths = []
+    bin_short, bin_total = {}, {}
     with gzip.open(path, "rt") as f:
         for i, line in enumerate(f):
             if i % 5 != 0:
                 continue
             parts = line.rstrip("\n").split("\t")
             try:
-                start, end = int(parts[1]), int(parts[2])
-                length = end - start
-                if 0 < length < 500:
-                    lengths.append(length)
+                chrom, start, end = parts[0], int(parts[1]), int(parts[2])
             except (ValueError, IndexError):
                 continue
+            length = end - start
+            if not (0 < length < 500):
+                continue
+            lengths.append(length)
+            if chrom in CHROMS:
+                key = (chrom, start // WINDOW)
+                bin_total[key] = bin_total.get(key, 0) + 1
+                if length < 150:
+                    bin_short[key] = bin_short.get(key, 0) + 1
             if len(lengths) >= sample_n:
                 break
+
     lengths = np.array(lengths)
     if len(lengths) < 100:
         return None
+    bin_fracs = np.array([bin_short.get(k, 0) / bin_total[k] for k in bin_total if bin_total[k] >= 15])
+
     return {
         "mean_len": round(float(lengths.mean()), 2),
         "median_len": round(float(np.median(lengths)), 2),
@@ -96,6 +109,8 @@ def extract_features(path, sample_n=SAMPLE_READS):
         "p75": round(float(np.percentile(lengths, 75)), 2),
         "p90": round(float(np.percentile(lengths, 90)), 2),
         "n_fragments": len(lengths),
+        "genome_bin_short_frac_mean": round(float(bin_fracs.mean()), 4) if len(bin_fracs) else None,
+        "genome_bin_short_frac_std": round(float(bin_fracs.std()), 4) if len(bin_fracs) else None,
     }
 
 
@@ -147,5 +162,5 @@ with open(OUTPUT_CSV, "a", newline="") as csvfile:
                 if os.path.exists(TMP_FILE):
                     os.remove(TMP_FILE)
 
-print(f"\nDone. Total real samples saved: {total_saved}")
+print(f"\nDone. Total real samples with genome-wide features: {total_saved}")
 print(f"Upload '{OUTPUT_CSV}' to the chat.")
