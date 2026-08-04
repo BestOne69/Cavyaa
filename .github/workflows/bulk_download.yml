@@ -39,6 +39,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: fragment-features-wide
-          path: fragment_features_genomewide.csv
+          name: fragment_end_features
+          path: fragment_end_features.csv
           retention-days: 30
