@@ -1,0 +1,2 @@
+sample_id,group,mean_len,median_len,std_len,pct_short,pct_mid,p10,p25,p75,p90,n_fragments,platform,study,sex,age
+86229,lung_cancer,142.58,152.0,54.32,47.71,47.98,63.0,109.0,171.0,190.0,1500000,,"{'id': 1, 'author': ['Snyder'], 'journal': 'Cell', 'date': '2016-01-14', 'identifiers': {'pmid': '26771485', 'doi': '10.1016/j.cell.2015.11.050'}, 'citeShort': 'Snyder et al., 2016', 'title': 'Cell-free DNA Comprises an In Vivo Nucleosome Footprint that Informs Its Tissues-Of-Origin.', 'link': 'https://www.ncbi.nlm.nih.gov/pubmed/26771485'}",,
