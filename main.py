@@ -1,14 +1,13 @@
 """
-Expands beyond simple Healthy vs Cancer -- pulls real samples from
-inflammation, autoimmune, and post-surgical/benign conditions, so the
-model can be tested on whether it confuses these with cancer signal
-(a real, previously untested vulnerability).
+Comprehensive real-data collection for the multivariable LOCO-generalization
+study: expands to 15-20+ real cancer types, adds difficult negative classes,
+AND captures study/source/platform metadata this time (never saved before --
+was our one untestable confounder).
 
-Reuses the exact same proven pipeline as bulk_download_v3.py.
-
-Run in GitHub Actions (same workflow pattern as before) or Codespaces:
+Run via GitHub Actions -- this is our biggest pull yet, budget the full
+6-hour window, likely needs 2+ runs (resume-safe, picks up where it left off).
     pip install requests numpy
-    python3 bulk_download_v4_negatives.py
+    python3 bulk_download_v6_comprehensive.py
 """
 import requests
 import os
@@ -20,26 +19,44 @@ DATA_BASE = "http://finaledb.research.cchmc.org/data"
 
 MIN_FRAGS = 10_000_000
 MAX_FRAGS = 60_000_000
-SAMPLE_READS = 2_000_000
+SAMPLE_READS = 1_500_000
 
-# The key addition: real non-cancer, non-healthy conditions -- tests whether
-# the model wrongly flags inflammation/autoimmune/benign disease as cancer,
-# a real specificity failure mode we've never actually tested.
+# All real cancer types confirmed available on FinaleDB (from the site's own
+# disease checklist), plus real "difficult negative" categories for the
+# disease-continuum / confounder work.
 GROUPS = [
-    ("healthy", "Healthy", 200),
-    ("lung_cancer", "Lung cancer", 88),
-    # --- NEW: negative-class expansion ---
-    ("hepatitis_b", "Hepatitis B", 100),                    # inflammation/infection
-    ("lupus", "Systemic lupus erythematosus", 100),         # autoimmune
-    ("ibd", "Inflammatory bowel disease", 100),              # autoimmune/inflammation
-    ("liver_transplant", "Liver transplant", 100),           # post-surgical/benign
-    ("cirrhosis", "Cirrhosis", 100),                         # benign chronic disease
+    # cancers
+    ("lung_cancer", "Lung cancer", 100),
+    ("liver_cancer", "Liver cancer", 100),
+    ("breast_cancer", "Breast cancer", 100),
+    ("colorectal_cancer", "Colorectal cancer", 100),
+    ("pancreatic_cancer", "Pancreatic cancer", 100),
+    ("ovarian_cancer", "Ovarian cancer", 100),
+    ("gastric_cancer", "Gastric cancer", 100),
+    ("kidney_cancer", "Kidney cancer", 100),
+    ("bladder_cancer", "Bladder cancer", 100),
+    ("head_neck_cancer", "Head and neck cancer", 100),
+    ("skin_cancer", "Skin cancer", 100),
+    ("bile_duct_cancer", "Bile duct cancer", 100),
+    ("esophageal_cancer", "Esophageal cancer", 100),
+    ("duodenal_cancer", "Duodenal cancer", 100),
+    ("uterine_cancer", "Uterine cancer", 100),
+    ("testicular_cancer", "Testicular cancer", 100),
+    ("prostate_cancer", "Prostate cancer", 100),
+    # healthy + difficult negatives (disease continuum / confounder testing)
+    ("healthy", "Healthy", 300),
+    ("hepatitis_b", "Hepatitis B", 100),
+    ("cirrhosis", "Cirrhosis", 100),
+    ("lupus", "Systemic lupus erythematosus", 100),
+    ("ibd", "Inflammatory bowel disease", 100),
+    ("liver_transplant", "Liver transplant", 100),
 ]
 
-OUTPUT_CSV = "fragment_features_negatives.csv"
+OUTPUT_CSV = "fragment_features_comprehensive.csv"
 TMP_FILE = "_tmp_download.bgz"
 FIELDNAMES = ["sample_id", "group", "mean_len", "median_len", "std_len",
-              "pct_short", "pct_mid", "p10", "p25", "p75", "p90", "n_fragments"]
+              "pct_short", "pct_mid", "p10", "p25", "p75", "p90", "n_fragments",
+              "platform", "study", "sex", "age"]  # NEW: metadata for confounder analysis
 
 
 def fetch_samples(disease, target_count, page_size=100):
@@ -100,6 +117,25 @@ def extract_features(path, sample_n=SAMPLE_READS):
     }
 
 
+def get_metadata(sample_record):
+    """Defensively extract platform/study/demographic fields -- field names
+    guessed from the site's UI columns (PLATFORM, STUDY) and its own
+    settings.js (instrument, publication). Falls back to None if a field
+    isn't present under any of the guessed names, rather than crashing."""
+    m = sample_record.get("metadata", sample_record)
+    def first_present(*keys):
+        for k in keys:
+            if k in m and m[k] not in (None, ""):
+                return m[k]
+        return None
+    return {
+        "platform": first_present("platform", "instrument", "sequencer"),
+        "study": first_present("study", "publication", "source_study"),
+        "sex": first_present("sex", "gender"),
+        "age": first_present("age", "age_at_diagnosis"),
+    }
+
+
 done_ids = set()
 write_header = not os.path.exists(OUTPUT_CSV)
 if not write_header:
@@ -138,16 +174,17 @@ with open(OUTPUT_CSV, "a", newline="") as csvfile:
                     continue
                 feats["sample_id"] = sid
                 feats["group"] = group_name
+                feats.update(get_metadata(s))
                 writer.writerow(feats)
                 csvfile.flush()
                 processed += 1
                 total_saved += 1
-                print(f"  [{processed}/{target}] {sid} (total so far: {total_saved})")
+                print(f"  [{processed}/{target}] {sid} (total so far: {total_saved}) "
+                      f"platform={feats.get('platform')} study={feats.get('study')}")
             except Exception as e:
                 print(f"  FAILED on {sid}: {e}")
                 if os.path.exists(TMP_FILE):
                     os.remove(TMP_FILE)
 
 print(f"\nDone. Total real samples saved: {total_saved}")
-print(f"Groups: healthy, lung_cancer, hepatitis_b, lupus, ibd, liver_transplant, cirrhosis")
 print(f"Upload '{OUTPUT_CSV}' to the chat.")
