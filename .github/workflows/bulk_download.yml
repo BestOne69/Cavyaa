@@ -39,6 +39,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: fragment_end_features
-          path: fragment_end_features.csv
+          name: fragment_features_negatives
+          path: fragment_features_negatives.csv
           retention-days: 30
