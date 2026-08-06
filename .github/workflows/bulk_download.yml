@@ -22,7 +22,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install requests numpy pandas pysam
+        run: pip install requests numpy pandas pysam subprocess
 
       - name: Run bulk download script
         run: python3 main.py
