@@ -5,3 +5,13 @@
 *.bgz
 *.tsv
 _tmp_download*
+hg19.fa*
+*.bam
+*.bai
+*.sra
+*.fastq
+*.pac
+*.bwt
+*.ann
+*.amb
+*.sa
