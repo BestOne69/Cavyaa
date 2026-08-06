@@ -57,22 +57,48 @@ def ensure_reference():
 
 
 def get_sra_runs_for_geo(geo_accession, max_runs):
-    """Resolve a GEO series accession to its underlying SRA run (SRR) IDs
-    via NCBI's E-utilities (a real, documented, open API)."""
+    """Resolve a GEO series accession to its underlying SRA run (SRR) IDs.
+    FIX: GEO accessions must be resolved via the 'gds' database first, then
+    cross-linked to 'sra' -- searching 'sra' directly with a GSE accession
+    returns 0 results (this was the bug in the first version)."""
+    # Step 1: find the GEO Series' internal UID
     search_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
-    r = requests.get(search_url, params={"db": "sra", "term": geo_accession, "retmax": max_runs, "retmode": "json"})
+    r = requests.get(search_url, params={"db": "gds", "term": f"{geo_accession}[ACCN]", "retmode": "json"})
     r.raise_for_status()
-    ids = r.json()["esearchresult"]["idlist"]
+    gds_ids = r.json()["esearchresult"]["idlist"]
+    if not gds_ids:
+        print(f"  No GEO record found for {geo_accession} -- accession may be wrong or malformed.")
+        return []
 
+    # Step 2: cross-link from GEO -> SRA to get linked SRA UIDs
+    link_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/elink.fcgi"
+    r2 = requests.get(link_url, params={"dbfrom": "gds", "db": "sra", "id": gds_ids[0], "retmode": "json"})
+    r2.raise_for_status()
+    linksets = r2.json().get("linksets", [])
+    sra_uids = []
+    for ls in linksets:
+        for linksetdb in ls.get("linksetdbs", []):
+            sra_uids.extend(linksetdb.get("links", []))
+    if not sra_uids:
+        print(f"  GEO record found, but no linked SRA records -- this GEO series may not have raw SRA data.")
+        return []
+    sra_uids = sra_uids[:max_runs]
+
+    # Step 3: get the actual SRR run accession for each linked SRA UID
     summary_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi"
+    r3 = requests.get(summary_url, params={"db": "sra", "id": ",".join(sra_uids), "retmode": "json"})
+    r3.raise_for_status()
+    result = r3.json().get("result", {})
     runs = []
-    for sra_id in ids:
-        r2 = requests.get(summary_url, params={"db": "sra", "id": sra_id, "retmode": "json"})
-        r2.raise_for_status()
-        # Extract SRR accession from the summary XML/JSON (field names vary by record)
-        result = r2.json().get("result", {}).get(sra_id, {})
-        runs.append(result.get("runs", ""))  # raw XML fragment containing SRR IDs; parsed downstream
-    return ids, runs
+    for uid in result.get("uids", []):
+        exp_xml = result[uid].get("expxml", "")
+        runs_xml = result[uid].get("runs", "")
+        # SRR accession appears as acc="SRRxxxxxxx" inside the runs XML fragment
+        import re
+        m = re.search(r'acc="(SRR\d+)"', runs_xml)
+        if m:
+            runs.append(m.group(1))
+    return runs
 
 
 def process_one_sample(srr_id):
@@ -124,8 +150,8 @@ ensure_tools()
 ensure_reference()
 
 print(f"\nResolving real SRA runs for GEO accession {GEO_ACCESSION}...")
-ids, _ = get_sra_runs_for_geo(GEO_ACCESSION, MAX_SAMPLES_THIS_RUN)
-print(f"Found {len(ids)} candidate SRA records (processing up to {MAX_SAMPLES_THIS_RUN})")
+srr_ids = get_sra_runs_for_geo(GEO_ACCESSION, MAX_SAMPLES_THIS_RUN)
+print(f"Found {len(srr_ids)} real SRR run accessions (processing up to {MAX_SAMPLES_THIS_RUN})")
 
 write_header = not os.path.exists(OUTPUT_CSV)
 with open(OUTPUT_CSV, "a", newline="") as csvfile:
@@ -133,21 +159,19 @@ with open(OUTPUT_CSV, "a", newline="") as csvfile:
     if write_header:
         writer.writeheader()
     processed = 0
-    for sra_id in ids[:MAX_SAMPLES_THIS_RUN]:
+    for srr_id in srr_ids:
         try:
-            feats = process_one_sample(sra_id)  # NOTE: real SRR resolution from sra_id needs the
-                                                  # esummary XML parsed properly -- flagged as a
-                                                  # known rough edge to debug on first real run
+            feats = process_one_sample(srr_id)
             if feats:
-                feats["sample_id"] = sra_id
-                feats["group"] = "unknown_from_GSE71378"  # metadata/phenotype per-sample needs
-                                                             # a second real GEO metadata lookup
+                feats["sample_id"] = srr_id
+                feats["group"] = "unknown_from_GSE71378"  # phenotype metadata needs a
+                                                             # separate real GEO lookup -- next step
                 writer.writerow(feats)
                 csvfile.flush()
                 processed += 1
                 print(f"  Success: {feats}")
         except Exception as e:
-            print(f"  FAILED on {sra_id}: {e}")
+            print(f"  FAILED on {srr_id}: {e}")
 
 print(f"\nDone. Processed {processed} real samples via full raw alignment pipeline.")
 print("Upload the CSV to the chat.")

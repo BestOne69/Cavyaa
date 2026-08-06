@@ -42,3 +42,16 @@ jobs:
           name: fragment_features_raw_pipeline
           path: fragment_features_raw_pipeline.csv
           retention-days: 30
+
+      - name: Cache reference genome and BWA index
+        uses: actions/cache@v4
+        with:
+          path: |
+            hg19.fa
+            hg19.fa.fai
+            hg19.fa.bwt
+            hg19.fa.pac
+            hg19.fa.ann
+            hg19.fa.amb
+            hg19.fa.sa
+          key: hg19-reference-bwa-index-v1
