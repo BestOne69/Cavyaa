@@ -1,6 +1,6 @@
 """
 CAVYAA raw FASTQ/BAM processing pipeline -- the real, heavier infrastructure
-needed to eventually go beyond FinaleDB's pre-processed tables.
+needed to eventually go beyond FinaleDB's pre-processed tables faizzy.
 
 Starting dataset: GEO accession GSE71378 (real, independently cited in
 published cfDNA fragmentomics literature as raw cfDNA WGS data).
@@ -26,7 +26,9 @@ import requests
 GEO_ACCESSION = "GSE71378"
 REF_FASTA = "hg19.fa"
 OUTPUT_CSV = "fragment_features_raw_pipeline.csv"
-MAX_SAMPLES_THIS_RUN = 20  # honest, realistic cap given alignment compute cost
+MAX_SAMPLES_THIS_RUN = 10  # lowered from 20 -- real WGS files are disk-hungry even with
+                            # aggressive per-sample cleanup; start conservative and raise
+                            # once we've confirmed the cleanup logic actually holds up
 FIELDNAMES = ["sample_id", "group", "mean_len", "median_len", "std_len",
               "pct_short", "pct_mid", "p10", "p25", "p75", "p90", "n_fragments"]
 
@@ -101,18 +103,46 @@ def get_sra_runs_for_geo(geo_accession, max_runs):
     return runs
 
 
+def check_disk_space(min_gb=2):
+    """Abort gracefully if we're running low on disk, rather than crashing
+    mid-write (which is what happened: 'No space left on device')."""
+    import shutil
+    free_gb = shutil.disk_usage(".").free / (1024**3)
+    if free_gb < min_gb:
+        print(f"  WARNING: only {free_gb:.1f}GB free -- stopping here to avoid a hard crash.")
+        return False
+    return True
+
+
 def process_one_sample(srr_id):
-    """Download, align, and extract fragment features for one real SRA run."""
+    """Download, align, and extract fragment features for one real SRA run.
+    FIX: aggressively deletes every intermediate file (sra, fastq, bam) the
+    moment it's no longer needed, instead of only cleaning up at the end --
+    the original version kept all of them simultaneously, exhausting the
+    runner's ~14GB disk on real WGS-sized files."""
     print(f"\n--- Processing {srr_id} ---")
+    if not check_disk_space():
+        return None
+
     run(f"prefetch {srr_id}")
     run(f"fasterq-dump {srr_id} --split-files -O .")
+    # delete the raw .sra immediately -- fasterq-dump already converted it, don't need it anymore
+    run(f"rm -rf {srr_id}/ {srr_id}.sra 2>/dev/null || true")
+
     r1, r2 = f"{srr_id}_1.fastq", f"{srr_id}_2.fastq"
     if not (os.path.exists(r1) and os.path.exists(r2)):
         print(f"  Paired FASTQ files not found for {srr_id}, skipping.")
         return None
+    if not check_disk_space():
+        os.remove(r1); os.remove(r2)
+        return None
 
     bam = f"{srr_id}.sorted.bam"
     run(f"bwa mem -t 2 {REF_FASTA} {r1} {r2} | samtools sort -@ 2 -o {bam} -")
+    # delete FASTQ immediately after alignment -- no longer needed, and they're often
+    # as large as the BAM itself
+    os.remove(r1)
+    os.remove(r2)
     run(f"samtools index {bam}")
 
     import pysam
@@ -125,7 +155,8 @@ def process_one_sample(srr_id):
             if len(lengths) >= 500_000:
                 break
 
-    for f in [f"{srr_id}.sra", r1, r2, bam, bam + ".bai"]:
+    # BAM is now fully processed -- delete it before returning
+    for f in [bam, bam + ".bai"]:
         if os.path.exists(f):
             os.remove(f)
 
