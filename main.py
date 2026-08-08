@@ -1,6 +1,6 @@
 """
 CAVYAA raw FASTQ/BAM processing pipeline -- the real, heavier infrastructure
-needed to eventually go beyond FinaleDB's pre-processed tables faizzy.
+needed to eventually go beyond FinaleDB's pre-processed tables.
 
 Starting dataset: GEO accession GSE71378 (real, independently cited in
 published cfDNA fragmentomics literature as raw cfDNA WGS data).
@@ -114,14 +114,20 @@ def check_disk_space(min_gb=2):
     return True
 
 
+def clear_ncbi_shared_cache():
+    """prefetch keeps its OWN shared reference-sequence cache under ~/.ncbi/,
+    separate from the per-sample SRR folder our other cleanup already
+    handles. This accumulates silently across samples and was the real
+    cause of 'storage exhausted' -- not a leftover from a single sample."""
+    home = os.path.expanduser("~")
+    run(f"rm -rf {home}/.ncbi/public/refseq {home}/.ncbi/public/sra 2>/dev/null || true")
+
+
 def process_one_sample(srr_id):
-    """Download, align, and extract fragment features for one real SRA run.
-    FIX: aggressively deletes every intermediate file (sra, fastq, bam) the
-    moment it's no longer needed, instead of only cleaning up at the end --
-    the original version kept all of them simultaneously, exhausting the
-    runner's ~14GB disk on real WGS-sized files."""
+    """Download, align, and extract fragment features for one real SRA run."""
     print(f"\n--- Processing {srr_id} ---")
-    if not check_disk_space():
+    clear_ncbi_shared_cache()  # NEW: clear before starting, not just after
+    if not check_disk_space(min_gb=4):  # raised from 2GB -- 2GB left no real margin
         return None
 
     run(f"prefetch {srr_id}")
@@ -159,6 +165,7 @@ def process_one_sample(srr_id):
     for f in [bam, bam + ".bai"]:
         if os.path.exists(f):
             os.remove(f)
+    clear_ncbi_shared_cache()  # NEW: also clear after, don't let it carry into the next sample
 
     if len(lengths) < 100:
         return None
