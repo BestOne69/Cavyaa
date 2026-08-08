@@ -131,8 +131,12 @@ def process_one_sample(srr_id):
         return None
 
     run(f"prefetch {srr_id}")
-    run(f"fasterq-dump {srr_id} --split-files -O .")
-    # delete the raw .sra immediately -- fasterq-dump already converted it, don't need it anymore
+    # FIX: previously used 'fasterq-dump' with no read limit, which converts the
+    # ENTIRE sequencing run (often 100M+ reads) just to measure 500k fragment
+    # lengths -- fasterq-dump's own size estimator correctly refused ("disk-limit
+    # exceeded") because that's genuinely disproportionate. 'fastq-dump -X' caps
+    # the read count directly, which is both disk-safe and far faster.
+    run(f"fastq-dump -X 2000000 --split-files {srr_id}")
     run(f"rm -rf {srr_id}/ {srr_id}.sra 2>/dev/null || true")
 
     r1, r2 = f"{srr_id}_1.fastq", f"{srr_id}_2.fastq"
